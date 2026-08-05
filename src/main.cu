@@ -1,10 +1,14 @@
 #include "align.h"
 #include "fasta.h"
+#include "guide_tree.h"
+#include "progressive.h"
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <vector>
 #include <random>
 #include <cstring>
+#include <chrono>
 
 static const char *mode_name(AlignMode m) {
     switch (m) {
@@ -69,6 +73,97 @@ static void run_benchmark(const std::vector<int> &lengths, const ScoreParams &sp
     }
 }
 
+// Day 2, step 1: all-pairs GPU alignment -- the Load-Balancing/Irregular-Parallelism
+// use case (every pair is an independent, unequal-length DP problem), unlike Day
+// 1's Global-Sync focus. Uses the PT path since that's the one we're trying to
+// justify; nonPT numbers from --benchmark already show where it wins instead.
+struct AllPairsResult {
+    std::vector<std::vector<int>> score;
+    std::vector<std::vector<double>> dist;
+    double wall_ms;
+};
+
+static AllPairsResult compute_all_pairs(const std::vector<FastaRecord> &records, const ScoreParams &sp) {
+    int n = (int)records.size();
+    AllPairsResult r;
+    r.score.assign(n, std::vector<int>(n, 0));
+    r.dist.assign(n, std::vector<double>(n, 0.0));
+
+    auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            AlignResult res = align_gpu_pt(records[i].seq, records[j].seq, sp, MODE_GLOBAL);
+            r.score[i][j] = r.score[j][i] = res.score;
+            // Simplified distance proxy for clustering purposes (not a calibrated
+            // evolutionary distance): more negative score -> more divergent.
+            r.dist[i][j] = r.dist[j][i] = -(double)res.score;
+        }
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    r.wall_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    return r;
+}
+
+static void print_score_matrix(const std::vector<std::vector<int>> &score) {
+    int n = (int)score.size();
+    std::cout << "score matrix:\n     ";
+    for (int j = 0; j < n; j++) std::cout << std::setw(7) << j;
+    std::cout << "\n";
+    for (int i = 0; i < n; i++) {
+        std::cout << std::setw(4) << i << ":";
+        for (int j = 0; j < n; j++) std::cout << std::setw(7) << (i == j ? 0 : score[i][j]);
+        std::cout << "\n";
+    }
+}
+
+static void run_guidetree(const std::vector<FastaRecord> &records, const ScoreParams &sp) {
+    int n = (int)records.size();
+    std::cout << "all-pairs alignment: " << n << " sequences, " << (n * (n - 1) / 2) << " pairs\n";
+
+    AllPairsResult ap = compute_all_pairs(records, sp);
+    std::cout << "\n"; print_score_matrix(ap.score);
+
+    std::vector<GuideTreeNode> tree = build_upgma(ap.dist, n);
+    std::vector<std::string> labels;
+    for (auto &r : records) labels.push_back(r.id.substr(0, 20));
+
+    std::cout << "\nguide tree (Newick):\n" << print_tree(tree, labels) << "\n";
+    std::cout << "\nall-pairs wall time: " << ap.wall_ms << " ms (" << (n * (n - 1) / 2) << " sequential PT alignments)\n";
+}
+
+// Day 2, step 3: full pipeline -- all-pairs GPU scoring -> UPGMA guide tree ->
+// progressive profile merge -> final MSA.
+static void run_msa(const std::vector<FastaRecord> &records, const ScoreParams &sp) {
+    int n = (int)records.size();
+    std::cout << "=== MSA pipeline: " << n << " sequences ===\n\n";
+
+    AllPairsResult ap = compute_all_pairs(records, sp);
+    print_score_matrix(ap.score);
+    std::cout << "all-pairs (GPU, PT): " << ap.wall_ms << " ms\n\n";
+
+    std::vector<GuideTreeNode> tree = build_upgma(ap.dist, n);
+    std::vector<std::string> labels;
+    for (auto &r : records) labels.push_back(r.id.substr(0, 20));
+    std::cout << "guide tree: " << print_tree(tree, labels) << "\n\n";
+
+    std::vector<std::string> raw;
+    for (auto &r : records) raw.push_back(r.seq);
+
+    auto t0 = std::chrono::steady_clock::now();
+    Profile msa = progressive_align(tree, raw, sp);
+    auto t1 = std::chrono::steady_clock::now();
+    double merge_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    std::cout << "final MSA (" << msa.rows.size() << " sequences x " << msa.rows[0].size() << " columns):\n";
+    size_t maxLabelLen = 0;
+    for (auto &l : labels) maxLabelLen = std::max(maxLabelLen, l.size());
+    for (size_t r = 0; r < msa.rows.size(); r++) {
+        std::string label = labels[msa.leafIds[r]];
+        std::cout << std::left << std::setw((int)maxLabelLen + 2) << label << msa.rows[r] << "\n";
+    }
+    std::cout << "\nprogressive merge (CPU, " << (n - 1) << " profile-profile alignments): " << merge_ms << " ms\n";
+}
+
 int main(int argc, char **argv) {
     std::string seqA, seqB;
     std::string fastaPath;
@@ -76,6 +171,8 @@ int main(int argc, char **argv) {
     std::string modeStr = "all";
     ScoreParams sp;
     bool doBenchmark = false;
+    bool doGuideTree = false;
+    bool doMsa = false;
     std::vector<int> benchLengths = {100, 500, 1000, 2000, 5000, 10000};
     bool showAlignment = false;
 
@@ -92,13 +189,26 @@ int main(int argc, char **argv) {
         else if (a == "--mismatch") sp.mismatch = std::stoi(next());
         else if (a == "--gap") sp.gap = std::stoi(next());
         else if (a == "--benchmark") doBenchmark = true;
+        else if (a == "--guidetree") doGuideTree = true;
+        else if (a == "--msa") doMsa = true;
         else if (a == "--show") showAlignment = true;
         else if (a == "--help") {
-            std::cout << "Usage: " << argv[0] << " [--seqA S --seqB S | --fasta FILE [--idxA N --idxB M]] "
+            std::cout << "Usage: " << argv[0] << " [--seqA S --seqB S | --fasta FILE [--idxA N --idxB M | --guidetree | --msa]] "
                          "[--mode global|local|semiglobal|all] "
                          "[--match N --mismatch N --gap N] [--show] [--benchmark]\n";
             return 0;
         }
+    }
+
+    if (doGuideTree) {
+        if (fastaPath.empty()) { std::cerr << "--guidetree requires --fasta FILE\n"; return 1; }
+        run_guidetree(read_fasta(fastaPath), sp);
+        return 0;
+    }
+    if (doMsa) {
+        if (fastaPath.empty()) { std::cerr << "--msa requires --fasta FILE\n"; return 1; }
+        run_msa(read_fasta(fastaPath), sp);
+        return 0;
     }
 
     if (!fastaPath.empty()) {

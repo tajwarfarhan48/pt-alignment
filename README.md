@@ -9,6 +9,11 @@ Gupta, Stuart & Owens, *"A Study of Persistent Threads Style GPU Programming
 for GPGPU Workloads"* (`ByteBoost GGG/`), which this project's kernel design
 directly follows for the wavefront synchronization strategy.
 
+**Picking this up on different hardware (e.g. porting to Neocortex/Cerebras
+CS-3) or after a long gap? Read `HANDOFF.md` first** — it covers what
+transfers (the algorithm) vs. what doesn't (the CUDA code) and what's left
+to do.
+
 ## What's implemented (Day 1)
 
 A single generalized anti-diagonal wavefront DP kernel, parameterized by
@@ -93,16 +98,69 @@ sbatch jobs/debug_run.slurm        # ~1 min smoke test on gpu_debug (A30 by defa
 sbatch jobs/benchmark_run.slurm    # full PT vs nonPT sweep on an H100
 ```
 
+## Day 1 results
+
+Correctness: verified on both A30 (`gpu_debug`, job 2019141) and H100 (`gpu`,
+job 2021937) — CPU, nonPT, and PT agree cell-for-cell on all three modes.
+
+Performance (`--benchmark`, global mode, random DNA, `nonpt_ms/pt_ms`):
+
+| length | A30 speedup | H100 speedup |
+|-------:|------------:|-------------:|
+|    100 |       1.25x |         1.29x |
+|    500 |       1.20x |         1.33x |
+|   1000 |       1.10x |         1.35x |
+|   2000 |       0.99x |         1.22x |
+|   5000 |       0.93x |         0.87x |
+|  10000 |       0.91x |         0.75x |
+
+PT wins for short-to-medium sequences, then loses — worse on H100 than A30 at
+the largest size. Root cause: the PT kernel launches once with a **fixed**
+grid sized by `cudaOccupancyMaxActiveBlocksPerMultiprocessor` (maximal
+launch), so on a wide diagonal near the middle of a large DP matrix, threads
+must loop internally over multiple cells. nonPT instead re-sizes its grid
+*every single launch* to match that diagonal's exact width. H100 has far more
+SMs than A30, so its fixed PT grid is proportionally an even smaller share of
+a wide diagonal's real parallelism — hence the larger H100 slowdown at
+10,000bp. This is a direct, concrete instance of the PT paper's own
+conclusion (§4.2): PT is not an unconditional win, and over-subscription
+(nonPT's traditional weakness) can act as automatic load balancing that a
+fixed-size PT launch doesn't get for free.
+
 ## Day 2 plan
 
-1. **All-pairs batch**: run the pairwise kernel over every sequence pair in
+1. ✅ **All-pairs batch**: run the pairwise kernel over every sequence pair in
    the input set — independent, variable-length DP problems, i.e. the
    Load-Balancing/Irregular-Parallelism use case (§3.2) rather than the
    Global-Sync one Day 1 focused on.
-2. **Guide tree**: UPGMA over the pairwise scores from step 1 (small, host-side).
-3. **Progressive merge**: walk the guide tree bottom-up, aligning
-   profile-vs-profile using the kernel's `semiglobal` mode at each internal
-   node, producing the final MSA.
+2. ✅ **Guide tree**: UPGMA over the pairwise scores from step 1 (`src/guide_tree.cpp`,
+   host-side). Run with:
+   ```
+   ./bin/msa_align --fasta test/silva_sample.fasta --guidetree
+   ```
+   Prints the score matrix and a Newick tree. Note: the distance used for
+   clustering is `-score`, a simplified proxy for divergence, not a
+   calibrated evolutionary distance — fine for ordering merges, not for
+   publishing branch lengths.
+3. ✅ **Progressive merge** (`src/progressive.cpp`): walk the guide tree
+   bottom-up, aligning profile-vs-profile at each internal node, producing the
+   final MSA. Run the whole pipeline end-to-end with:
+   ```
+   ./bin/msa_align --fasta test/silva_sample.fasta --msa
+   ```
+   Scope decision: this step generalizes the pairwise DP recurrence to
+   **sum-of-pairs column scoring** (every cross-pair between two profile
+   columns, gap cost scaled by `depthA*depthB`) and runs on the **host**, not
+   as a new GPU kernel. Reasoning: profile depth here is just the sequence
+   count (small at workshop scale), so this step is not the bottleneck --
+   the O(n^2) all-pairs pairwise stage (step 1, GPU-parallel) dominates the
+   runtime. This mirrors how real progressive aligners are usually structured:
+   parallelize the pairwise distance computation, keep the inherently
+   sequential tree-guided merge simple. An early "align single representative
+   sequences per cluster, then propagate the gap pattern" shortcut was
+   considered and rejected: it has a real ordering ambiguity whenever a
+   subtree already contains internal gaps from an earlier merge, which a
+   proper profile-profile DP resolves automatically by construction.
 
 ### Stretch goals (only if time remains)
 

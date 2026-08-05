@@ -11,7 +11,7 @@ ARCHFLAGS := -gencode arch=compute_80,code=sm_80 -gencode arch=compute_90,code=s
 CXXFLAGS := -O3 -std=c++17 -Iinclude -rdc=true
 LDFLAGS  := -lcudadevrt
 
-SRC := src/cpu_reference.cpp src/traceback.cpp src/fasta.cpp src/gpu_align.cu src/main.cu
+SRC := src/cpu_reference.cpp src/traceback.cpp src/fasta.cpp src/guide_tree.cpp src/progressive.cpp src/gpu_align.cu src/main.cu
 TARGET := bin/msa_align
 
 .PHONY: all clean check-nvcc
