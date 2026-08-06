@@ -1,0 +1,27 @@
+{
+    "tasks": [
+        {
+            "taskType": "CRD",
+            "taskMap": [
+                {
+                    "taskId": {
+                        "wseId": -1,
+                        "wseIds": [
+                            -1
+                        ]
+                    },
+                    "addressBook": {
+                        "taskIpPort": "10.1.169.9:9000",
+                        "taskDebugAddress": "100.67.201.206:9002",
+                        "taskNodeName": "inf008-es-sr04"
+                    }
+                }
+            ],
+            "resourceInfo": {
+                "memoryBytes": "71940702208",
+                "cpuMillicore": "24000"
+            },
+            "taskCommand": "python /cbcore/py_root/cerebras/sdk/appliance/sdk_appliance_server.py"
+        }
+    ]
+}
