@@ -3,6 +3,12 @@
 Two separate deliverables live here, both comparing the same three backends
 on the same data:
 
+**See `HARDWARE.md` for what node/CPU/GPU each result actually ran on, and
+whether that hardware was shared with other users' jobs during the run** --
+the two independent CPU sweeps disagree by ~13-15% across every point, which
+is exactly the kind of gap a hardware note should explain rather than leave
+as unexplained variance.
+
 ## 1. Correctness comparison (10-sequence MSA)
 
 All three backends run the identical pipeline (all-pairs global alignment ->
