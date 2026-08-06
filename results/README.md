@@ -95,3 +95,50 @@ n=16,000 that's ~128M pairs, at n=72,000 ~2.6B pairs -- multiple orders of
 magnitude beyond what fits in this task's time budget on any of the three
 backends (measured CPU rate alone extrapolates to ~318 days at n=72,000).
 The sweep above measures the real O(n^2) trend on a feasible range instead.
+
+## 3. CS-3 utilization follow-up: batching + B-relay (cs3/milestone3_batched, cs3/milestone4_relay)
+
+The single-pair-at-a-time CS-3 design above only ever activates 1 of 762
+fabric columns per launch (~0.11% PE-grid occupancy) and is ~99% I/O-bound
+-- each pair pays a full network round-trip even though the actual on-wafer
+compute is under 1ms. Two follow-up designs, kept separate from the main
+sweep so the original (proven, simple) design stays intact as a reference:
+
+**milestone3_batched -- tile many pairs across columns.** Same per-column
+recurrence, replicated across up to ~755 columns (width capped below the
+full 762 by a compiler margin requirement: usable width at fabric-offset 4
+is `762-7=755`, not 762 -- this is the same `+7` margin rule used for
+simulator fabric-dims sizing throughout the project, just also required on
+real hardware, which cost some trial and error to rediscover). Verified
+correct on the simulator (tiny scale) and real hardware (width=4, real
+1000bp pairs, exact match against `align_cpu()`). **Hit a hard ceiling at
+larger width**: B is still replicated to every PE in a column, so at
+width=750 the B payload alone is 750x4MB=3GB -- over gRPC's ~2GB message
+size limit (`RESOURCE_EXHAUSTED: Sent message larger than max`). Even below
+that limit, real width=4 timing showed B transfer is throughput-bound
+(~142 MB/s measured), not latency-bound, so batching alone would only have
+delivered a ~5-6x wall-time improvement (~1.6h for n=640, down from ~8.7h),
+far short of the ~750x reduction in round-trip *count* -- round-trip count
+was never the actual bottleneck, data volume was.
+
+**milestone4_relay -- fix the actual bottleneck.** Same batching, but B is
+uploaded once per column (to the top PE only) and relayed south through the
+fabric via the same neighbor-to-neighbor mechanism the H-row wavefront
+already uses, instead of being replicated to all 1000 PEs via host memcpy.
+Cuts host-side B transfer by 1000x and sidesteps the gRPC limit entirely
+(3MB at width=750, not 3GB). Verified correct on the simulator and real
+hardware (width=4): B transfer dropped from 113-122ms to **0.83ms** (136x),
+total per-batch time from ~193-203ms to **66ms** (3x, even at this tiny
+width where the improvement is least pronounced) -- `d2h` (reading results
+back), not B transfer, is now the dominant cost. Full-width (n=320, n=640)
+real-hardware runs were in progress on the shared cluster as of this
+writing; see `cs3/milestone4_relay/scores_n*.txt` if present, otherwise this
+is the next thing to check.
+
+This isn't a claim that milestone4 is "the" production design -- it trades
+one constraint (host transfer bandwidth) for others not fully explored here
+(e.g. `d2h` round-trip latency now dominates, and a genuinely 2D per-pair
+tiling, splitting B across PEs within a column too, was identified but not
+built). It's evidence that the 0.11%-utilization number from section 2 is a
+consequence of this specific design's choices, not a hard ceiling imposed
+by the hardware.
