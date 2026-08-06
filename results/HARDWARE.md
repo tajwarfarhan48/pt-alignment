@@ -87,24 +87,47 @@ idle one, and that's a confound worth knowing about, not hiding.
   exclusive use of the wafer -- this is the one part of the whole
   cross-backend comparison that did **not** have to trade off isolation
   for time budget, because the scheduler enforces it by construction.
-- **Wafer-level utilization/occupancy API: does not exist, checked, not
-  guessed.** `csctl get job <id> -oyaml --debug=2` (max debug verbosity)
-  exposes job lifecycle timestamps, the allocated system name, and one
-  networking counter (`cerebras/act-spine-load`, which read `0 times from
-  0 total AX->WSE connection(s)` for our jobs and isn't a utilization
-  metric) -- no PE-occupancy, FLOP-utilization, or similar figure appears
-  anywhere in the API surface this session had access to (`csctl`, or the
-  `cerebras.sdk.client` Python API used to drive the runs). If such
-  telemetry exists, it's not exposed to this user-facing tooling.
+- **Allocation quantity: the entire wafer, always -- no sub-wafer
+  granularity exists on this cluster.** Nothing observed this session
+  (job queue behavior, `wseInUse` flipping true/false as a single unit,
+  one `execute` job at a time) suggests the scheduler can split the chip
+  so two jobs hold different regions concurrently. Allocation is
+  all-or-nothing at the whole-system level -- so "how much was allocated
+  to us" has a simple, confirmed answer: 100% of `wse127-cs-sy01`, for
+  the duration of our `execute` job.
+- **Wafer-level utilization/occupancy API: does not exist, checked
+  thoroughly, not guessed.** Two things checked, not one:
+  1. `csctl get job <id> -oyaml --debug=2` (max verbosity) exposes job
+     lifecycle timestamps, the allocated system name, and one networking
+     counter (`cerebras/act-spine-load`, which read `0 times from 0 total
+     AX->WSE connection(s)` for our jobs and isn't a utilization metric)
+     -- no PE-occupancy or FLOP-utilization figure anywhere.
+  2. The SDK ships real instrumentation/trace tooling
+     (`cerebras.sdk.sdk_debug_instr_trace.InstrTrace`,
+     `cerebras.sdk.sdk_debug_wavelet_trace.WaveletTrace`) that looks like
+     it could answer this -- but both constructors require a `simfab_log`
+     argument (`InstrTrace(elf_dir, simfab_log)`,
+     `WaveletTrace(simfab_log)`): the **simulator's** log file (same
+     `simfab_traces/` directory that grew to 57GB during an earlier
+     simulator run in this session). Neither tool takes anything
+     equivalent for a real-hardware run -- the SDK's own PE-activity
+     tracing is simulator-only in this version, not just absent from
+     `csctl`. `sdk_debug_pe_symbol_dump.PESymbolDump` also exists but only
+     inspects the compiled ELF's static symbol table (addresses/sizes),
+     not runtime activity.
+  If real-hardware PE-utilization telemetry exists in some other tool or
+  a newer SDK version, it wasn't reachable from this session's install.
 - **What we can say instead (computed, not measured)**: our kernel uses a
   1x1000 vertical line of PEs (see `cs3/milestone2_allpairs/layout.csl`)
   against a full addressable fabric of 762x1172 = 893,064 PEs (the
   `--fabric-dims` passed at compile time, matching the real WSE-3's
   addressable grid) -- so our own PE-grid occupancy was analytically
-  ~0.11% of the fabric, not measured but exactly derivable from the
-  compile parameters. That's a statement about how much of the chip our
-  *design* used, not about contention from other jobs (there was none,
-  per the exclusivity point above).
+  ~0.11% of the fabric we were allocated, not measured but exactly
+  derivable from the compile parameters. That's a statement about how
+  much of the *allocation* our design used, not about contention from
+  other jobs (there was none, per the exclusivity point above) -- and
+  it's a compile-time fact, not a runtime measurement, because no tool
+  available this session can produce the latter for real hardware.
 
 ## Action items
 
