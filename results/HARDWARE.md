@@ -37,40 +37,82 @@ idle one, and that's a confound worth knowing about, not hiding.
 
 ## CPU, canonical run (`results/sweep_cpu.csv`, from Neocortex/Cerebras cloud host)
 
-**Not yet documented.** This is the CSV currently treated as canonical in
-`results/README.md`'s schema table, and it's ~13-15% faster than the ACES
-run across every sweep point -- exactly the kind of gap that needs a CPU
-model/clock speed/sharing-status explanation to be a fair comparison point,
-not just a number. Whoever is driving the Neocortex-side session should
-capture: CPU model (e.g. `lscpu` or equivalent), core count, clock speed,
-and whether that host was shared with other workloads during the run.
+- **Host**: `inf004-us-sr17` (Cerebras cloud usernode)
+- **CPU**: AMD EPYC 9354P, 32 cores / 64 threads (1 socket, 2 threads/core),
+  3250 MHz
+- **Sharing**: **not dedicated** -- this is a shared multi-tenant usernode.
+  At the time of the run, at least 7 other users were logged in concurrently
+  (`haochenl-cloud`, `prathyusht-cloud`, `prabhuv-cloud`, `horaciog-cloud`,
+  `vishali-cloud`, `oyinkansolaa-cloud`, `peijingl-cloud`, via `who`/`w`),
+  and `ps aux` showed active competing workloads from other users, including
+  another Cerebras inference job (`hosseing-cloud` running
+  `soda_inference.py` against a live CSX session). `sweep_cpu.cpp` is
+  single-threaded like the ACES CPU leg, so it used 1 of 64 threads; the
+  other 63 were available to (and in active use by) everyone else on the
+  box. Same class of confound as the ACES CPU run, not a cleaner
+  measurement -- the two CPU CSVs are both "shared host, 1 thread used,"
+  not "dedicated vs. shared."
+- This plausibly explains at least part of the ~13-15% gap vs. the ACES
+  CPU run in the other direction than you might guess: EPYC 9354P's
+  3.25GHz base is *higher* than the Xeon Platinum 8468's 3.1GHz base,
+  which is consistent with this host being faster despite also being
+  shared -- clock speed and microarchitecture differences are a more
+  likely explanation than sharing status, since both runs were on shared
+  hosts with comparable contention profiles (single-threaded job, several
+  other tenants active).
 
 ## Cerebras CS-3 (`cs3/milestone2_allpairs/sweep_cerebras.csv`)
 
-**Partially documented, and what exists isn't quite the right thing.** The
-committed `wsjob-*-cluster-details.json` files describe the **appliance
-coordinator task** (`taskType: CRD`, node `inf008-es-sr04`, 72GB memory,
-24 CPU millicores) -- that's the host process managing the job, not the
-WSE-3 wafer itself. It doesn't tell us:
-- Whether the wafer (or the specific PE region used) was exclusively ours
-  during the run, or time-shared with another queued job
-- Any wafer-level utilization/occupancy figure
-- Which physical CS-3 system / fabric coordinates were used, if that
-  varies between the `wsjob-*` runs (there are 5 different job IDs
-  committed, suggesting multiple submission attempts -- worth clarifying
-  whether they're the same hardware allocation or different ones)
-
-Given the CS-3 sweep's own results/README.md note that ~99% of measured
-time is I/O-bound (network round-trip per pair), sharing status of the
-wafer itself may matter less than network path variability -- but that's
-a guess, not a measured fact, and should be replaced with a real answer
-from whoever has Neocortex queue visibility.
+- **Physical system**: `wse127-cs-sy01` -- confirmed via `csctl get job
+  <id> -oyaml`'s `status.systems` field to be the *only* physical CS-3 on
+  this entire cluster (every `csctl get system`/`csctl get cluster` check
+  throughout this session, across several hours, ever showed exactly one
+  system row). Of the 5 committed `wsjob-*-cluster-details.json` files,
+  only 2 (`wsjob-hwarpyc9stjqejwcvbk9w4`, `wsjob-vazpky3hptlgvjrrnjul5o`)
+  are worker (`taskType: WRK`) tasks that actually touch the wafer
+  (`wseIds: [0]`); the other 3 are compiler coordinator tasks
+  (`taskType: CRD`, node `inf008-es-sr04`, no wafer contact at all) from
+  separate compile-only attempts. Both wafer-touching jobs ran on the same
+  `wse127-cs-sy01` -- there is no second system this cluster could have
+  scheduled onto.
+- **Exclusivity: yes, confirmed empirically, not assumed.** Every `csctl
+  get jobs` check made throughout this session (dozens, over several
+  hours, including while explicitly watching the queue for this sweep)
+  showed at most **one** `execute`-type job in `RUNNING` phase at any
+  time, with every other job -- including several from other users --
+  sitting `QUEUED` until the running one finished or was cancelled. The
+  scheduler serializes wafer access at the execute-job level; there is no
+  time-multiplexing across concurrent jobs on this cluster. So whenever
+  `sweep_cerebras.csv`'s numbers were being measured, the job had
+  exclusive use of the wafer -- this is the one part of the whole
+  cross-backend comparison that did **not** have to trade off isolation
+  for time budget, because the scheduler enforces it by construction.
+- **Wafer-level utilization/occupancy API: does not exist, checked, not
+  guessed.** `csctl get job <id> -oyaml --debug=2` (max debug verbosity)
+  exposes job lifecycle timestamps, the allocated system name, and one
+  networking counter (`cerebras/act-spine-load`, which read `0 times from
+  0 total AX->WSE connection(s)` for our jobs and isn't a utilization
+  metric) -- no PE-occupancy, FLOP-utilization, or similar figure appears
+  anywhere in the API surface this session had access to (`csctl`, or the
+  `cerebras.sdk.client` Python API used to drive the runs). If such
+  telemetry exists, it's not exposed to this user-facing tooling.
+- **What we can say instead (computed, not measured)**: our kernel uses a
+  1x1000 vertical line of PEs (see `cs3/milestone2_allpairs/layout.csl`)
+  against a full addressable fabric of 762x1172 = 893,064 PEs (the
+  `--fabric-dims` passed at compile time, matching the real WSE-3's
+  addressable grid) -- so our own PE-grid occupancy was analytically
+  ~0.11% of the fabric, not measured but exactly derivable from the
+  compile parameters. That's a statement about how much of the chip our
+  *design* used, not about contention from other jobs (there was none,
+  per the exclusivity point above).
 
 ## Action items
 
-1. Neocortex-side session: capture CPU host specs for `results/sweep_cpu.csv`
-   and wafer exclusivity/utilization for the CS-3 sweep, add to this file.
+1. ~~Neocortex-side session: capture CPU host specs...~~ Done, see above.
 2. Consider whether the ~13-15% CPU discrepancy is worth reconciling (e.g.
    re-running both on directly comparable hardware) or is fine to report
    as-is with this hardware note attached -- a call for whoever's
    presenting these results, not something to silently resolve either way.
+   Given both hosts turned out to be shared with comparable contention
+   profiles, the gap is more likely CPU model/clock than isolation --
+   reconciling would mean matching hardware, not chasing exclusivity.
