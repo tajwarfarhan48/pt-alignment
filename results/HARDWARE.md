@@ -74,3 +74,22 @@ from whoever has Neocortex queue visibility.
    re-running both on directly comparable hardware) or is fine to report
    as-is with this hardware note attached -- a call for whoever's
    presenting these results, not something to silently resolve either way.
+
+## Update: monitored reruns (ACES), not exclusive
+
+Attempted `--exclusive` reruns first, but that requires an entirely free
+node and the scheduler ETA came back too slow given the time budget (next
+day). Dropped `--exclusive`, kept live utilization capture instead --
+sharing is visible in the data even though it isn't prevented.
+
+- **GPU**: node `ac045`. Live utilization sampled every 5s throughout:
+  `results/gpu/gpu_utilization.csv`. See job log for whether other users'
+  jobs were on this node concurrently (same sacct method as the original
+  HARDWARE.md sections above).
+- **CPU**: node `ac062`. Live per-core utilization sampled every 5s
+  throughout: `results/sweep_cpu_aces_utilization.log`.
+
+These numbers supersede the earlier (also non-exclusive, unmonitored)
+`results/gpu/sweep_gpu.csv` / `results/sweep_cpu_aces.csv` values (files
+overwritten in place; prior values still visible in git history) --
+upgrade here is the added utilization telemetry, not isolation.
