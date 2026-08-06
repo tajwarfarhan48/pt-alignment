@@ -1,0 +1,129 @@
+// Per-PE kernel for milestone 1. Each PE owns one row i = row_index of the
+// global-mode DP recurrence (same recurrence as compute_cell / align_cpu:
+// diag/up/left, TB_STOP=0/TB_DIAG=1/TB_UP=2/TB_LEFT=3, linear gap penalty).
+//
+// "up" (row i-1) either arrives from the west neighbor PE (which just
+// finished computing that row) or, for PE 0 (row 1), is synthesized locally
+// as the border row H[0][j] = -gap*j -- PE 0 has no upstream neighbor.
+//
+// gap/match/mismatch are passed as unsigned magnitudes (cslc --params only
+// takes unsigned ints); the recurrence subtracts them explicitly instead of
+// adding a negative literal.
+//
+// H_row/TB_row are i32/u32 because memcpy_d2h/h2d require 32-bit data.
+
+param memcpy_params;
+
+param n: i16;
+param row_index: i16;
+param a_char: i16;
+param has_west: bool;
+param has_east: bool;
+param west_color: color;
+param east_color: color;
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+
+// Fixed test pair for this milestone: B = "ACGTTCGT", encoded A=0,C=1,G=2,T=3.
+const B = [8]i16{0, 1, 2, 3, 3, 1, 2, 3};
+
+const gap: i32 = 2;
+const match_score: i32 = 2;
+const mismatch_penalty: i32 = 1;
+
+const TB_STOP: u32 = 0;
+const TB_DIAG: u32 = 1;
+const TB_UP: u32 = 2;
+const TB_LEFT: u32 = 3;
+
+var H_row: [9]i32;   // this PE's own computed row, i = row_index
+var TB_row: [9]u32;
+var up_row: [9]i32;  // row i-1, received from west or synthesized (PE 0)
+
+const H_ptr: [*]i32 = &H_row;
+const TB_ptr: [*]u32 = &TB_row;
+
+const west_iq = @get_input_queue(2);
+const east_oq = @get_output_queue(3);
+
+const done_task_id = @get_local_task_id(8);
+const after_recv_task_id = @get_local_task_id(9);
+
+fn do_compute() void {
+  // j = 0: base case, no recurrence -- matches cpu_reference.cpp's border init.
+  H_row[0] = -gap * @as(i32, row_index);
+  TB_row[0] = TB_UP;
+
+  var prev_left: i32 = H_row[0];
+  var prev_up: i32 = up_row[0]; // H[i-1][0], becomes the diag source for j=1
+
+  var j: i16 = 1;
+  while (j <= n) : (j += 1) {
+    const up_j = up_row[j];
+    const diag_score = prev_up + (if (a_char == B[j - 1]) match_score else -mismatch_penalty);
+    const up_score = up_j - gap;
+    const left_score = prev_left - gap;
+
+    var best = diag_score;
+    var dir = TB_DIAG;
+    if (up_score > best) { best = up_score; dir = TB_UP; }
+    if (left_score > best) { best = left_score; dir = TB_LEFT; }
+
+    H_row[j] = best;
+    TB_row[j] = dir;
+
+    prev_left = best;
+    prev_up = up_j;
+  }
+
+  if (has_east) {
+    const out_dsd = @get_dsd(fabout_dsd, if (@is_arch("wse3")) .{
+                      .extent = n + 1, .output_queue = east_oq
+                    } else .{
+                      .fabric_color = east_color, .extent = n + 1,
+                      .output_queue = east_oq
+                    });
+    const h_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &H_row, .extent = n + 1 });
+    @mov32(out_dsd, h_dsd, .{ .async = true, .activate = done_task_id });
+  } else {
+    @activate(done_task_id);
+  }
+}
+
+task after_recv_task() void {
+  do_compute();
+}
+
+task done_task() void {
+  sys_mod.unblock_cmd_stream();
+}
+
+fn compute() void {
+  if (has_west) {
+    const in_dsd = @get_dsd(fabin_dsd, .{ .extent = n + 1, .input_queue = west_iq });
+    const buf_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &up_row, .extent = n + 1 });
+    @mov32(buf_dsd, in_dsd, .{ .async = true, .activate = after_recv_task_id });
+  } else {
+    var j: i16 = 0;
+    while (j <= n) : (j += 1) {
+      up_row[j] = -gap * @as(i32, j);
+    }
+    do_compute();
+  }
+}
+
+comptime {
+  @bind_local_task(after_recv_task, after_recv_task_id);
+  @bind_local_task(done_task, done_task_id);
+
+  if (has_west) {
+    @initialize_queue(west_iq, .{ .color = west_color });
+  }
+  if (has_east) {
+    @initialize_queue(east_oq, if (@is_arch("wse3")) .{ .color = east_color } else .{});
+  }
+
+  @export_symbol(H_ptr, "H_row");
+  @export_symbol(TB_ptr, "TB_row");
+  @export_symbol(compute);
+}

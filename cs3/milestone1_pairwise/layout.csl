@@ -1,0 +1,59 @@
+// Milestone 1: one small pairwise global (Needleman-Wunsch) alignment on CS-3.
+//
+// Design: one PE per row of sequence A (PE k computes DP row i = k+1). The
+// anti-diagonal dependency of the DP recurrence (compute_cell's diag/up/left
+// in the CUDA version) becomes neighbor-to-neighbor fabric sends here: PE k
+// streams its finished row east to PE k+1 as soon as it's done, and PE k+1
+// starts computing the moment that row arrives. There is no grid.sync()
+// equivalent and no global barrier -- only PEs with an actual data dependency
+// (adjacent rows) ever wait on each other.
+//
+// Scope note: this milestone pipelines at row granularity (a PE waits for
+// its whole upstream row before computing its own whole row), not at the
+// finer per-column/per-cell granularity the CUDA wavefront kernel used. That
+// is still a real wavefront across PEs with zero global sync -- it is just
+// coarser-grained. Column-level streaming (matching the CUDA kernel's
+// per-diagonal granularity exactly) is a natural follow-up once this is
+// verified correct, not a requirement for first correctness.
+//
+// Fixed test pair for this milestone (matches
+// cs3/milestone1_pairwise/reference/dump_reference.cpp):
+//   A = "ACGTACGT" (m=8, one char per PE)
+//   B = "ACGTTCGT" (n=8, shared by every PE)
+// bases encoded A=0, C=1, G=2, T=3.
+
+param m: i16; // number of PEs = len(A)
+param n: i16; // len(B)
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = m, .height = 1 });
+
+// Encoded bases of A, one per PE (row_index = x + 1, character A[x]).
+const A_bases = [8]i16{0, 1, 2, 3, 0, 1, 2, 3}; // "ACGTACGT"
+
+layout {
+  @set_rectangle(m, 1);
+
+  for (@range(i16, m)) |x| {
+    @set_tile_code(x, 0, "pe_program.csl", .{
+      .memcpy_params = memcpy.get_params(x),
+      .n = n,
+      .row_index = x + 1,
+      .a_char = A_bases[x],
+      .has_west = x > 0,
+      .has_east = x < m - 1,
+      .west_color = if (x > 0) @get_color(x - 1) else @get_color(0),
+      .east_color = if (x < m - 1) @get_color(x) else @get_color(0),
+    });
+  }
+
+  // Link k connects PE k (sender) -> PE k+1 (receiver) using color k.
+  for (@range(i16, m - 1)) |k| {
+    const c = @get_color(k);
+    @set_color_config(k, 0, c, .{ .routes = .{ .rx = .{ RAMP }, .tx = .{ EAST } } });
+    @set_color_config(k + 1, 0, c, .{ .routes = .{ .rx = .{ WEST }, .tx = .{ RAMP } } });
+  }
+
+  @export_name("H_row", [*]i32, false);
+  @export_name("TB_row", [*]u32, false);
+  @export_name("compute", fn()void);
+}

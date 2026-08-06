@@ -1,0 +1,124 @@
+// Per-PE kernel: same recurrence as milestone 1 (global mode, diag/up/left,
+// TB_STOP=0/TB_DIAG=1/TB_UP=2/TB_LEFT=3), but oriented along the fabric's
+// height axis (NORTH/SOUTH instead of EAST/WEST) and with sequence data
+// (a_char, B) as runtime-uploaded arrays instead of compile-time constants,
+// so the same compiled kernel serves every pair in the all-pairs batch --
+// only the memcpy_h2d payloads change between runs.
+
+param memcpy_params;
+
+param n: i16;
+param row_index: i16;
+param has_north: bool;
+param has_south: bool;
+param north_color: color;
+param south_color: color;
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+
+const gap: i32 = 2;
+const match_score: i32 = 2;
+const mismatch_penalty: i32 = 1;
+
+const TB_STOP: u32 = 0;
+const TB_DIAG: u32 = 1;
+const TB_UP: u32 = 2;
+const TB_LEFT: u32 = 3;
+
+var a_char: [1]i32;       // this PE's character of A, uploaded via memcpy_h2d
+var B: [1000]i32;         // shared B array, broadcast to every PE via memcpy_h2d
+var H_row: [1001]i32;     // this PE's own computed row, i = row_index
+var TB_row: [1001]u32;
+var up_row: [1001]i32;    // row i-1, received from north or synthesized (PE 0)
+
+var a_char_ptr: [*]i32 = &a_char;
+var B_ptr: [*]i32 = &B;
+const H_ptr: [*]i32 = &H_row;
+const TB_ptr: [*]u32 = &TB_row;
+
+const north_iq = @get_input_queue(2);
+const south_oq = @get_output_queue(3);
+
+const done_task_id = @get_local_task_id(8);
+const after_recv_task_id = @get_local_task_id(9);
+
+fn do_compute() void {
+  // j = 0: base case, no recurrence -- matches cpu_reference.cpp's border init.
+  H_row[0] = -gap * @as(i32, row_index);
+  TB_row[0] = TB_UP;
+
+  var prev_left: i32 = H_row[0];
+  var prev_up: i32 = up_row[0]; // H[i-1][0], becomes the diag source for j=1
+
+  var j: i16 = 1;
+  while (j <= n) : (j += 1) {
+    const up_j = up_row[j];
+    const diag_score = prev_up + (if (a_char[0] == B[j - 1]) match_score else -mismatch_penalty);
+    const up_score = up_j - gap;
+    const left_score = prev_left - gap;
+
+    var best = diag_score;
+    var dir = TB_DIAG;
+    if (up_score > best) { best = up_score; dir = TB_UP; }
+    if (left_score > best) { best = left_score; dir = TB_LEFT; }
+
+    H_row[j] = best;
+    TB_row[j] = dir;
+
+    prev_left = best;
+    prev_up = up_j;
+  }
+
+  if (has_south) {
+    const out_dsd = @get_dsd(fabout_dsd, if (@is_arch("wse3")) .{
+                      .extent = n + 1, .output_queue = south_oq
+                    } else .{
+                      .fabric_color = south_color, .extent = n + 1,
+                      .output_queue = south_oq
+                    });
+    const h_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &H_row, .extent = n + 1 });
+    @mov32(out_dsd, h_dsd, .{ .async = true, .activate = done_task_id });
+  } else {
+    @activate(done_task_id);
+  }
+}
+
+task after_recv_task() void {
+  do_compute();
+}
+
+task done_task() void {
+  sys_mod.unblock_cmd_stream();
+}
+
+fn compute() void {
+  if (has_north) {
+    const in_dsd = @get_dsd(fabin_dsd, .{ .extent = n + 1, .input_queue = north_iq });
+    const buf_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &up_row, .extent = n + 1 });
+    @mov32(buf_dsd, in_dsd, .{ .async = true, .activate = after_recv_task_id });
+  } else {
+    var j: i16 = 0;
+    while (j <= n) : (j += 1) {
+      up_row[j] = -gap * @as(i32, j);
+    }
+    do_compute();
+  }
+}
+
+comptime {
+  @bind_local_task(after_recv_task, after_recv_task_id);
+  @bind_local_task(done_task, done_task_id);
+
+  if (has_north) {
+    @initialize_queue(north_iq, .{ .color = north_color });
+  }
+  if (has_south) {
+    @initialize_queue(south_oq, if (@is_arch("wse3")) .{ .color = south_color } else .{});
+  }
+
+  @export_symbol(a_char_ptr, "a_char");
+  @export_symbol(B_ptr, "B");
+  @export_symbol(H_ptr, "H_row");
+  @export_symbol(TB_ptr, "TB_row");
+  @export_symbol(compute);
+}

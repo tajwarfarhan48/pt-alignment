@@ -1,0 +1,58 @@
+// Generalized pairwise global-alignment kernel for the all-pairs stage.
+// Same wavefront design as cs3/milestone1_pairwise (one PE per row of A,
+// neighbor-to-neighbor fabric relay instead of grid.sync()), generalized two
+// ways:
+//
+// 1. Vertical PE line (fabric height axis, N/S routing) instead of
+//    horizontal (width axis, E/W routing). Real CS-3 fabric width is 762,
+//    height 1172 -- this dataset's sequences are all 1000bp, which doesn't
+//    fit a horizontal line (762 < 1000) but comfortably fits a vertical one.
+// 2. Sequences are runtime-uploaded via memcpy_h2d (a_char per PE, B shared
+//    across all PEs) instead of baked in as compile-time constants. m/n stay
+//    compile-time (fixed at 1000 for every pair in this dataset), so one
+//    compiled artifact is reused for the whole all-pairs batch -- only the
+//    two memcpy_h2d payloads change between pairs.
+
+param m: i16; // number of PEs = len(A)
+param n: i16; // len(B)
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = 1, .height = m });
+
+// Only 24 fabric colors exist total, far fewer than the up to ~1000 links a
+// long PE chain needs -- one color per link (milestone 1's approach, fine
+// for m=8) doesn't scale. Instead, alternate just 2 colors by link parity:
+// link k connects PE k -> PE k+1 using color_even if k is even, color_odd if
+// k is odd. Since PE y's incoming link is (y-1) and outgoing link is y, and
+// consecutive integers always have different parity, every PE's north color
+// and south color are always the two different colors -- no PE ever needs
+// two different roles (send vs. receive) on the same color.
+const color_even = @get_color(0);
+const color_odd = @get_color(1);
+
+layout {
+  @set_rectangle(1, m);
+
+  for (@range(i16, m)) |y| {
+    @set_tile_code(0, y, "pe_program.csl", .{
+      .memcpy_params = memcpy.get_params(0),
+      .n = n,
+      .row_index = y + 1,
+      .has_north = y > 0,
+      .has_south = y < m - 1,
+      .north_color = if ((y - 1) % 2 == 0) color_even else color_odd,
+      .south_color = if (y % 2 == 0) color_even else color_odd,
+    });
+  }
+
+  for (@range(i16, m - 1)) |k| {
+    const c = if (k % 2 == 0) color_even else color_odd;
+    @set_color_config(0, k, c, .{ .routes = .{ .rx = .{ RAMP }, .tx = .{ SOUTH } } });
+    @set_color_config(0, k + 1, c, .{ .routes = .{ .rx = .{ NORTH }, .tx = .{ RAMP } } });
+  }
+
+  @export_name("a_char", [*]i32, true);
+  @export_name("B", [*]i32, true);
+  @export_name("H_row", [*]i32, false);
+  @export_name("TB_row", [*]u32, false);
+  @export_name("compute", fn()void);
+}

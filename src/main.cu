@@ -4,11 +4,14 @@
 #include "progressive.h"
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <random>
 #include <cstring>
 #include <chrono>
+#include <sstream>
+#include <cuda_runtime.h>
 
 static const char *mode_name(AlignMode m) {
     switch (m) {
@@ -81,6 +84,7 @@ struct AllPairsResult {
     std::vector<std::vector<int>> score;
     std::vector<std::vector<double>> dist;
     double wall_ms;
+    double kernel_ms_total; // sum of per-pair AlignResult::kernel_ms (pure device time)
 };
 
 static AllPairsResult compute_all_pairs(const std::vector<FastaRecord> &records, const ScoreParams &sp) {
@@ -88,6 +92,7 @@ static AllPairsResult compute_all_pairs(const std::vector<FastaRecord> &records,
     AllPairsResult r;
     r.score.assign(n, std::vector<int>(n, 0));
     r.dist.assign(n, std::vector<double>(n, 0.0));
+    r.kernel_ms_total = 0.0;
 
     auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < n; i++) {
@@ -97,11 +102,48 @@ static AllPairsResult compute_all_pairs(const std::vector<FastaRecord> &records,
             // Simplified distance proxy for clustering purposes (not a calibrated
             // evolutionary distance): more negative score -> more divergent.
             r.dist[i][j] = r.dist[j][i] = -(double)res.score;
+            r.kernel_ms_total += res.kernel_ms;
         }
     }
     auto t1 = std::chrono::steady_clock::now();
     r.wall_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     return r;
+}
+
+// Runtime/memory/IO-share sweep across sequence counts, for cross-backend
+// comparison against the CPU and CS-3 sweeps (see results/README.md). Uses
+// the first N records of the fasta for each sweep point -- same dataset,
+// same ScoreParams, same all-pairs code path as --guidetree/--msa.
+static void run_sweep(const std::vector<FastaRecord> &records, const ScoreParams &sp,
+                       const std::vector<int> &ns, const std::string &outCsv) {
+    std::ofstream csv(outCsv);
+    csv << "n,pairs,wall_ms,kernel_ms,io_ms,io_pct,mem_used_mb\n";
+    for (int n : ns) {
+        if (n > (int)records.size()) {
+            std::cerr << "skipping n=" << n << " (only " << records.size() << " sequences available)\n";
+            continue;
+        }
+        std::vector<FastaRecord> subset(records.begin(), records.begin() + n);
+
+        size_t freeBefore = 0, freeAfter = 0, total = 0;
+        cudaMemGetInfo(&freeBefore, &total);
+
+        AllPairsResult ap = compute_all_pairs(subset, sp);
+
+        cudaMemGetInfo(&freeAfter, &total);
+        double gpuMemMb = (double)(freeBefore > freeAfter ? freeBefore - freeAfter : 0) / (1024.0 * 1024.0);
+
+        long long pairs = (long long)n * (n - 1) / 2;
+        double io_ms = ap.wall_ms - ap.kernel_ms_total;
+        double io_pct = ap.wall_ms > 0 ? 100.0 * io_ms / ap.wall_ms : 0.0;
+
+        std::cout << "n=" << n << " pairs=" << pairs << " wall_ms=" << ap.wall_ms
+                   << " kernel_ms=" << ap.kernel_ms_total << " io_pct=" << io_pct
+                   << "% mem_used_mb=" << gpuMemMb << "\n";
+        csv << n << "," << pairs << "," << ap.wall_ms << "," << ap.kernel_ms_total << ","
+            << io_ms << "," << io_pct << "," << gpuMemMb << "\n";
+    }
+    std::cout << "wrote " << outCsv << "\n";
 }
 
 static void print_score_matrix(const std::vector<std::vector<int>> &score) {
@@ -133,7 +175,7 @@ static void run_guidetree(const std::vector<FastaRecord> &records, const ScorePa
 
 // Day 2, step 3: full pipeline -- all-pairs GPU scoring -> UPGMA guide tree ->
 // progressive profile merge -> final MSA.
-static void run_msa(const std::vector<FastaRecord> &records, const ScoreParams &sp) {
+static void run_msa(const std::vector<FastaRecord> &records, const ScoreParams &sp, const std::string &outPath = "") {
     int n = (int)records.size();
     std::cout << "=== MSA pipeline: " << n << " sequences ===\n\n";
 
@@ -162,17 +204,29 @@ static void run_msa(const std::vector<FastaRecord> &records, const ScoreParams &
         std::cout << std::left << std::setw((int)maxLabelLen + 2) << label << msa.rows[r] << "\n";
     }
     std::cout << "\nprogressive merge (CPU, " << (n - 1) << " profile-profile alignments): " << merge_ms << " ms\n";
+
+    if (!outPath.empty()) {
+        std::ofstream out(outPath);
+        if (!out) { std::cerr << "cannot write: " << outPath << "\n"; return; }
+        for (size_t r = 0; r < msa.rows.size(); r++) {
+            out << ">" << records[msa.leafIds[r]].id << "\n" << msa.rows[r] << "\n";
+        }
+        std::cout << "wrote aligned FASTA: " << outPath << "\n";
+    }
 }
 
 int main(int argc, char **argv) {
     std::string seqA, seqB;
     std::string fastaPath;
+    std::string outPath;
     int idxA = 0, idxB = 1;
     std::string modeStr = "all";
     ScoreParams sp;
     bool doBenchmark = false;
     bool doGuideTree = false;
     bool doMsa = false;
+    std::string sweepArg;
+    std::string sweepOutCsv = "sweep.csv";
     std::vector<int> benchLengths = {100, 500, 1000, 2000, 5000, 10000};
     bool showAlignment = false;
 
@@ -182,6 +236,7 @@ int main(int argc, char **argv) {
         if (a == "--seqA") seqA = next();
         else if (a == "--seqB") seqB = next();
         else if (a == "--fasta") fastaPath = next();
+        else if (a == "--out") outPath = next();
         else if (a == "--idxA") idxA = std::stoi(next());
         else if (a == "--idxB") idxB = std::stoi(next());
         else if (a == "--mode") modeStr = next();
@@ -191,15 +246,29 @@ int main(int argc, char **argv) {
         else if (a == "--benchmark") doBenchmark = true;
         else if (a == "--guidetree") doGuideTree = true;
         else if (a == "--msa") doMsa = true;
+        else if (a == "--sweep") sweepArg = next();
+        else if (a == "--sweep-out") sweepOutCsv = next();
         else if (a == "--show") showAlignment = true;
         else if (a == "--help") {
             std::cout << "Usage: " << argv[0] << " [--seqA S --seqB S | --fasta FILE [--idxA N --idxB M | --guidetree | --msa]] "
                          "[--mode global|local|semiglobal|all] "
-                         "[--match N --mismatch N --gap N] [--show] [--benchmark]\n";
+                         "[--match N --mismatch N --gap N] [--show] [--benchmark] "
+                         "[--out FILE.fasta]  (--msa only: also write the final MSA as aligned FASTA)\n"
+                         "  --sweep N1,N2,...  runtime/memory/IO-share sweep across sequence counts "
+                         "(--sweep-out FILE.csv, default sweep.csv), requires --fasta\n";
             return 0;
         }
     }
 
+    if (!sweepArg.empty()) {
+        if (fastaPath.empty()) { std::cerr << "--sweep requires --fasta FILE\n"; return 1; }
+        std::vector<int> ns;
+        std::stringstream ss(sweepArg);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) ns.push_back(std::stoi(tok));
+        run_sweep(read_fasta(fastaPath), sp, ns, sweepOutCsv);
+        return 0;
+    }
     if (doGuideTree) {
         if (fastaPath.empty()) { std::cerr << "--guidetree requires --fasta FILE\n"; return 1; }
         run_guidetree(read_fasta(fastaPath), sp);
@@ -207,7 +276,7 @@ int main(int argc, char **argv) {
     }
     if (doMsa) {
         if (fastaPath.empty()) { std::cerr << "--msa requires --fasta FILE\n"; return 1; }
-        run_msa(read_fasta(fastaPath), sp);
+        run_msa(read_fasta(fastaPath), sp, outPath);
         return 0;
     }
 
