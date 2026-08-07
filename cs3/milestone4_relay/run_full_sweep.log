@@ -1,0 +1,15 @@
+Event 2026-08-07 13:33:33 +0000 UTC reason=InconsistentVersion wsjob=wsjob-ffs5gr6mpj87unbempjo5u message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+2026-08-07 13:38:59,724 INFO     CSL compiler output:
+	CSL compiler produced no messages. Compilation successful.
+Event 2026-08-07 13:39:43 +0000 UTC reason=InconsistentVersion wsjob=wsjob-3yqrjzgtcnh557fb5zsvvm message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+Could not find coordinator IP:port in cluster details
+Empty ingress service url. Falling back to default server: 10.0.12.0:443
+compiled artifact (width=750): ./cs_1828835b608a18aea04b7353b0eff68ca6db0838d59a98995c126a51cd67f0bc.tar.gz
+n=10 pairs=45 launches=1 wall_ms=248.5
+n=20 pairs=190 launches=1 wall_ms=241.5
+n=40 pairs=780 launches=2 wall_ms=486.8
+n=80 pairs=3160 launches=5 wall_ms=1232.4
+n=160 pairs=12720 launches=17 wall_ms=4179.8
+n=320 pairs=51040 launches=69 wall_ms=16983.8
+n=640 pairs=204480 launches=273 wall_ms=66699.8
+wrote sweep_batched.csv
