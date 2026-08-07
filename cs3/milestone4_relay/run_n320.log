@@ -1,0 +1,84 @@
+Event 2026-08-06 23:45:31 +0000 UTC reason=InconsistentVersion wsjob=wsjob-8nf3cgxqqmporajl8h2lf2 message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+2026-08-06 23:51:11,675 INFO     CSL compiler output:
+	CSL compiler produced no messages. Compilation successful.
+Event 2026-08-06 23:56:59 +0000 UTC reason=InconsistentVersion wsjob=wsjob-asr7ou7wjonmf6clwulqmx message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+Could not find coordinator IP:port in cluster details
+Empty ingress service url. Falling back to default server: 10.0.12.0:443
+compiled artifact (width=750): ./cs_1828835b608a18aea04b7353b0eff68ca6db0838d59a98995c126a51cd67f0bc.tar.gz
+timing (width=4): {'pack_s': 0.0004426315426826477, 'h2d_a_s': 0.001603725366294384, 'h2d_b_s': 0.0007688431069254875, 'launch_s': 0.0006859414279460907, 'd2h_s': 0.062476227059960365, 'total_s': 0.06597736850380898, 'b_bytes': 16000}
+got:      [500, 488, 530, 461]
+expected: [500, 488, 530, 461]
+SUCCESS: 4-wide real-hardware B-relay batch matches align_cpu() exactly
+all-pairs batched: 320 sequences, 51040 pairs, width=750
+  batch 0-750/51040 done
+  batch 750-1500/51040 done
+  batch 1500-2250/51040 done
+  batch 2250-3000/51040 done
+  batch 3000-3750/51040 done
+  batch 3750-4500/51040 done
+  batch 4500-5250/51040 done
+  batch 5250-6000/51040 done
+  batch 6000-6750/51040 done
+  batch 6750-7500/51040 done
+  batch 7500-8250/51040 done
+  batch 8250-9000/51040 done
+  batch 9000-9750/51040 done
+  batch 9750-10500/51040 done
+  batch 10500-11250/51040 done
+  batch 11250-12000/51040 done
+  batch 12000-12750/51040 done
+  batch 12750-13500/51040 done
+  batch 13500-14250/51040 done
+  batch 14250-15000/51040 done
+  batch 15000-15750/51040 done
+  batch 15750-16500/51040 done
+  batch 16500-17250/51040 done
+  batch 17250-18000/51040 done
+  batch 18000-18750/51040 done
+  batch 18750-19500/51040 done
+  batch 19500-20250/51040 done
+  batch 20250-21000/51040 done
+  batch 21000-21750/51040 done
+  batch 21750-22500/51040 done
+  batch 22500-23250/51040 done
+  batch 23250-24000/51040 done
+  batch 24000-24750/51040 done
+  batch 24750-25500/51040 done
+  batch 25500-26250/51040 done
+  batch 26250-27000/51040 done
+  batch 27000-27750/51040 done
+  batch 27750-28500/51040 done
+  batch 28500-29250/51040 done
+  batch 29250-30000/51040 done
+  batch 30000-30750/51040 done
+  batch 30750-31500/51040 done
+  batch 31500-32250/51040 done
+  batch 32250-33000/51040 done
+  batch 33000-33750/51040 done
+  batch 33750-34500/51040 done
+  batch 34500-35250/51040 done
+  batch 35250-36000/51040 done
+  batch 36000-36750/51040 done
+  batch 36750-37500/51040 done
+  batch 37500-38250/51040 done
+  batch 38250-39000/51040 done
+  batch 39000-39750/51040 done
+  batch 39750-40500/51040 done
+  batch 40500-41250/51040 done
+  batch 41250-42000/51040 done
+  batch 42000-42750/51040 done
+  batch 42750-43500/51040 done
+  batch 43500-44250/51040 done
+  batch 44250-45000/51040 done
+  batch 45000-45750/51040 done
+  batch 45750-46500/51040 done
+  batch 46500-47250/51040 done
+  batch 47250-48000/51040 done
+  batch 48000-48750/51040 done
+  batch 48750-49500/51040 done
+  batch 49500-50250/51040 done
+  batch 50250-51000/51040 done
+  batch 51000-51040/51040 done
+
+51040 pairs in 69 launches, 15.27s wall time
+wrote scores_n320_w750.txt

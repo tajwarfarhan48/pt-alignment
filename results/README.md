@@ -130,10 +130,25 @@ Cuts host-side B transfer by 1000x and sidesteps the gRPC limit entirely
 hardware (width=4): B transfer dropped from 113-122ms to **0.83ms** (136x),
 total per-batch time from ~193-203ms to **66ms** (3x, even at this tiny
 width where the improvement is least pronounced) -- `d2h` (reading results
-back), not B transfer, is now the dominant cost. Full-width (n=320, n=640)
-real-hardware runs were in progress on the shared cluster as of this
-writing; see `cs3/milestone4_relay/scores_n*.txt` if present, otherwise this
-is the next thing to check.
+back), not B transfer, is now the dominant cost. **Full-width real-hardware results, verified correct**:
+- n=320 (51,040 pairs): **15.27s**, 69 launches (`cs3/milestone4_relay/scores_n320_w750.txt`)
+- n=640 (204,480 pairs): **62.24s**, 273 launches (`cs3/milestone4_relay/scores_n640_w750.txt`)
+
+Both spot-checked exactly against `align_cpu()`. For scale: the *sequential*
+single-pair design's measured rate (~154ms/pair, from section 2's
+`sweep_cerebras.csv`) extrapolates to ~2.2h (n=320) and ~8.7h (n=640) --
+the B-relay batched design landed these in under a minute and a half
+combined, a ~500x wall-time reduction. Not on the same chart as the CPU/GPU
+sweep above deliberately: CPU and GPU never got an equivalent
+architecture-level optimization pass, so plotting these batched numbers
+next to their unoptimized sequential CS-3 sibling (or against CPU/GPU)
+would imply an apples-to-apples comparison that isn't one -- this is
+CS-3-vs-itself, a design-space finding, not a cross-backend one.
+
+The 10-sequence correctness batch (`cs3/milestone4_relay/scores.txt`,
+`results/cerebras/`) also ran via this design: 45 pairs, 1 launch,
+**0.076s**. Score matrix, guide tree, and final MSA all verified to match
+the CPU reference (`results/cpu/`) exactly.
 
 This isn't a claim that milestone4 is "the" production design -- it trades
 one constraint (host transfer bandwidth) for others not fully explored here
