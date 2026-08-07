@@ -1,0 +1,47 @@
+// Same batched multi-column design as milestone3, but B no longer gets
+// replicated M times via memcpy_h2d (one full copy per PE) -- it's
+// uploaded once per column (to the top PE only) and relayed south through
+// the fabric, the same way H_row/up_row already flow. Host-side B upload
+// volume drops by a factor of M (1000x at M=1000): the host writes N
+// elements per column instead of M*N.
+
+param m: i16;     // PEs per column = len(A) for one pairwise alignment
+param n: i16;     // len(B)
+param width: i16; // number of pairs processed per launch
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = width, .height = m });
+
+const color_even = @get_color(0);
+const color_odd = @get_color(1);
+
+layout {
+  @set_rectangle(width, m);
+
+  for (@range(i16, width)) |x| {
+    for (@range(i16, m)) |y| {
+      @set_tile_code(x, y, "pe_program.csl", .{
+        .memcpy_params = memcpy.get_params(x),
+        .n = n,
+        .row_index = y + 1,
+        .has_north = y > 0,
+        .has_south = y < m - 1,
+        .north_color = if ((y - 1) % 2 == 0) color_even else color_odd,
+        .south_color = if (y % 2 == 0) color_even else color_odd,
+      });
+    }
+  }
+
+  for (@range(i16, width)) |x| {
+    for (@range(i16, m - 1)) |k| {
+      const c = if (k % 2 == 0) color_even else color_odd;
+      @set_color_config(x, k, c, .{ .routes = .{ .rx = .{ RAMP }, .tx = .{ SOUTH } } });
+      @set_color_config(x, k + 1, c, .{ .routes = .{ .rx = .{ NORTH }, .tx = .{ RAMP } } });
+    }
+  }
+
+  @export_name("a_char", [*]i32, true);
+  @export_name("B", [*]i32, true);   // host writes only row y=0 now, see run_batch_relay.py
+  @export_name("H_row", [*]i32, false);
+  @export_name("TB_row", [*]u32, false);
+  @export_name("compute", fn()void);
+}

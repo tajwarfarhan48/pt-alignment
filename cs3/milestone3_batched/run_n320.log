@@ -1,0 +1,33 @@
+Event 2026-08-06 21:39:10 +0000 UTC reason=InconsistentVersion wsjob=wsjob-oxpeoc7uw3szgpxscfkbgh message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+2026-08-06 21:45:06,573 INFO     CSL compiler output:
+	CSL compiler produced no messages. Compilation successful.
+Event 2026-08-06 21:45:52 +0000 UTC reason=InconsistentVersion wsjob=wsjob-ejeyzcqpyc3a64qvhjkvk6 message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+Could not find coordinator IP:port in cluster details
+Empty ingress service url. Falling back to default server: 10.0.12.0:443
+compiled artifact (width=750): ./cs_d0587801f794310bf5b06ca4b18033421397be6c6bc877211bea50ad7b05ecb5.tar.gz
+timing (width=4): {'pack_s': 0.005847468972206116, 'h2d_a_s': 0.004276754334568977, 'h2d_b_s': 0.12187992036342621, 'launch_s': 0.0010038437321782112, 'd2h_s': 0.06999743357300758, 'total_s': 0.2030054209753871, 'b_bytes': 16000000}
+got:      [500, 488, 530, 461]
+expected: [500, 488, 530, 461]
+SUCCESS: 4-wide real-hardware batch matches align_cpu() exactly
+all-pairs batched: 320 sequences, 51040 pairs, width=750
+Traceback (most recent call last):
+  File "/cloud_psc_homedir/souvikd-cloud/pt-alignment/cs3/milestone3_batched/run_batch_hw.py", line 115, in <module>
+    main()
+  File "/cloud_psc_homedir/souvikd-cloud/pt-alignment/cs3/milestone3_batched/run_batch_hw.py", line 98, in main
+    batch_scores = run_batch(runner, symbols, pairs, M, N,
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cloud_psc_homedir/souvikd-cloud/pt-alignment/cs3/milestone3_batched/run_batch.py", line 62, in run_batch
+    runner.memcpy_h2d(b_symbol, b_flat, 0, 0, width, m, n, streaming=False,
+  File "/tmp/claude-1553002104/-cloud-psc-homedir-souvikd-cloud/a346c626-0c63-4222-8dc2-5ea1aec9a761/scratchpad/sdk_venv/lib64/python3.11/site-packages/cerebras/sdk/client/sdk_appliance_client.py", line 1017, in memcpy_h2d
+    response = self.stub().sdk_runtime_memcpy_h2d(generate_h2d_requests())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1553002104/-cloud-psc-homedir-souvikd-cloud/a346c626-0c63-4222-8dc2-5ea1aec9a761/scratchpad/sdk_venv/lib64/python3.11/site-packages/grpc/_channel.py", line 1131, in __call__
+    return _end_unary_response_blocking(state, call, False, None)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/claude-1553002104/-cloud-psc-homedir-souvikd-cloud/a346c626-0c63-4222-8dc2-5ea1aec9a761/scratchpad/sdk_venv/lib64/python3.11/site-packages/grpc/_channel.py", line 849, in _end_unary_response_blocking
+    raise _InactiveRpcError(state)
+grpc._channel._InactiveRpcError: <_InactiveRpcError of RPC that terminated with:
+	status = StatusCode.RESOURCE_EXHAUSTED
+	details = "Sent message larger than max (2147482663 vs. 2147482624)"
+	debug_error_string = "UNKNOWN:Sent message larger than max (2147482663 vs. 2147482624) {created_time:"2026-08-06T21:50:52.582388656+00:00", grpc_status:8}"
+>
