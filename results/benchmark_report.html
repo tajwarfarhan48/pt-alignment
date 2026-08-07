@@ -1,0 +1,167 @@
+<title>CPU vs GPU vs Cerebras CS-3 — All-Pairs Alignment Benchmark</title>
+<style>
+  :root {
+    --ink: #1c2024; --ink-secondary: #52585f; --ink-muted: #80868c;
+    --surface: #fafaf9; --surface-raised: #ffffff; --border: #e2e4e7;
+    --accent-cpu: #2a78d6; --accent-gpu: #eb6834; --accent-cerebras: #1baf7a;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --ink: #eef0f2; --ink-secondary: #b6bcc4; --ink-muted: #7d848c;
+    --surface: #14161a; --surface-raised: #1c1f24; --border: #2a2e34;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #eef0f2; --ink-secondary: #b6bcc4; --ink-muted: #7d848c;
+      --surface: #14161a; --surface-raised: #1c1f24; --border: #2a2e34;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--sans); background: var(--surface); color: var(--ink);
+    margin: 0; padding: 2.5rem 1.5rem 5rem; line-height: 1.55;
+  }
+  .page { max-width: 840px; margin: 0 auto; }
+  h1 {
+    font-family: var(--mono); font-size: 1.6rem; font-weight: 700; margin: 0 0 0.4rem;
+    text-wrap: balance; letter-spacing: -0.01em;
+  }
+  .subtitle { color: var(--ink-secondary); margin: 0 0 2rem; font-size: 0.95rem; }
+  .subtitle code { font-family: var(--mono); background: var(--surface-raised); padding: 0.1rem 0.35rem; border-radius: 4px; border: 1px solid var(--border); font-size: 0.85em; }
+  section { margin: 3rem 0; }
+  h2 {
+    font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin: 0 0 0.3rem;
+    display: flex; align-items: baseline; gap: 0.6rem;
+  }
+  .chart-note { color: var(--ink-muted); font-size: 0.85rem; margin: 0 0 1rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 1.2rem; margin: 0.8rem 0 1.2rem; font-size: 0.85rem; }
+  .legend-item { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--ink-secondary); }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .badge { font-family: var(--mono); font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 999px; letter-spacing: 0.02em; }
+  .badge-real { background: color-mix(in srgb, #1baf7a 18%, transparent); color: #0d8f60; }
+  :root[data-theme="dark"] .badge-real, @media (prefers-color-scheme: dark) { .badge-real { color: #4fd99a; } }
+  .badge-pending { background: color-mix(in srgb, #80868c 18%, transparent); color: var(--ink-muted); }
+  .chart-wrap {
+    background: var(--surface-raised); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1rem 1rem 0.5rem; overflow-x: auto;
+  }
+  .chart-svg { width: 100%; height: auto; min-width: 520px; }
+  .gridline { stroke: var(--border); stroke-width: 1; }
+  .axis-line { stroke: var(--ink-muted); stroke-width: 1; }
+  .tick { stroke: var(--ink-muted); stroke-width: 1; }
+  .axis-label { font-family: var(--mono); font-size: 10px; fill: var(--ink-muted); font-variant-numeric: tabular-nums; }
+  .axis-title { font-family: var(--sans); font-size: 11px; fill: var(--ink-muted); }
+  .data-point { cursor: pointer; }
+  .data-point:hover { stroke: var(--surface-raised); stroke-width: 2; }
+  .data-bar { cursor: pointer; opacity: 0.92; }
+  .data-bar:hover { opacity: 1; }
+  .chart-empty {
+    background: var(--surface-raised); border: 1px dashed var(--border); border-radius: 10px;
+    padding: 3rem 1rem; text-align: center; color: var(--ink-muted); font-family: var(--mono); font-size: 0.85rem;
+  }
+  details { margin-top: 0.75rem; }
+  summary { font-family: var(--mono); font-size: 0.8rem; color: var(--ink-secondary); cursor: pointer; }
+  .data-table { width: 100%; border-collapse: collapse; margin-top: 0.75rem; font-family: var(--mono); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+  .data-table caption { text-align: left; color: var(--ink-muted); font-size: 0.75rem; padding-bottom: 0.4rem; }
+  .data-table th, .data-table td { text-align: right; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); }
+  .data-table th:first-child, .data-table td:first-child { text-align: left; }
+  .data-table th { color: var(--ink-muted); font-weight: 500; }
+  .io-note { font-size: 0.85rem; color: var(--ink-secondary); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem 1rem; margin-top: 1rem; }
+  .io-note strong { color: var(--ink); }
+  footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border); color: var(--ink-muted); font-size: 0.8rem; }
+</style>
+
+<div class="page">
+  <h1>All-Pairs Alignment: CPU vs GPU vs Cerebras CS-3</h1>
+  <p class="subtitle">
+    Same dataset (<code>test/sweep_dataset.fasta</code>, 1000bp real plasmid sequences),
+    same sweep points (n = 10, 20, 40, 80, 160, 320, 640, doubling), same global-alignment
+    scoring (match=2, mismatch=-1, gap=2). Pairs scale as n(n-1)/2 -- this report doesn't
+    reach 16k-72k sequences literally: see the note in the runtime section.
+  </p>
+  <div class="legend"><span class="legend-item"><span class="legend-swatch" style="background:#2a78d6"></span>CPU <span class="badge badge-real">real data</span></span><span class="legend-item"><span class="legend-swatch" style="background:#eb6834"></span>GPU (CUDA, PT) <span class="badge badge-real">real data</span></span><span class="legend-item"><span class="legend-swatch" style="background:#1baf7a"></span>Cerebras CS-3 <span class="badge badge-real">real data</span></span></div>
+
+  <section>
+    <h2>1. Runtime vs # of sequences</h2>
+    <p class="chart-note">Wall time (log y-axis — pair count grows O(n²), so linear would flatten the small-n points to invisibility).</p>
+    <div class="chart-wrap"><svg viewBox="0 0 760 340" class="chart-svg" id="chart-runtime" role="img" aria-label="Runtime vs # sequences">
+  <line x1="64" y1="292.0" x2="736" y2="292.0" class="gridline"/><text x="56" y="292.0" class="axis-label" text-anchor="end" dominant-baseline="middle">154</text><line x1="64" y1="238.4" x2="736" y2="238.4" class="gridline"/><text x="56" y="238.4" class="axis-label" text-anchor="end" dominant-baseline="middle">1,022</text><line x1="64" y1="184.8" x2="736" y2="184.8" class="gridline"/><text x="56" y="184.8" class="axis-label" text-anchor="end" dominant-baseline="middle">6,768</text><line x1="64" y1="131.2" x2="736" y2="131.2" class="gridline"/><text x="56" y="131.2" class="axis-label" text-anchor="end" dominant-baseline="middle">44,820</text><line x1="64" y1="77.6" x2="736" y2="77.6" class="gridline"/><text x="56" y="77.6" class="axis-label" text-anchor="end" dominant-baseline="middle">296,823</text><line x1="64" y1="24.0" x2="736" y2="24.0" class="gridline"/><text x="56" y="24.0" class="axis-label" text-anchor="end" dominant-baseline="middle">1,965,730</text>
+  <line x1="64" y1="292" x2="736" y2="292" class="axis-line"/>
+  <line x1="64.0" y1="292" x2="64.0" y2="297" class="tick"/><text x="64.0" y="312" class="axis-label" text-anchor="middle">10</text><line x1="176.0" y1="292" x2="176.0" y2="297" class="tick"/><text x="176.0" y="312" class="axis-label" text-anchor="middle">20</text><line x1="288.0" y1="292" x2="288.0" y2="297" class="tick"/><text x="288.0" y="312" class="axis-label" text-anchor="middle">40</text><line x1="400.0" y1="292" x2="400.0" y2="297" class="tick"/><text x="400.0" y="312" class="axis-label" text-anchor="middle">80</text><line x1="512.0" y1="292" x2="512.0" y2="297" class="tick"/><text x="512.0" y="312" class="axis-label" text-anchor="middle">160</text><line x1="624.0" y1="292" x2="624.0" y2="297" class="tick"/><text x="624.0" y="312" class="axis-label" text-anchor="middle">320</text><line x1="736.0" y1="292" x2="736.0" y2="297" class="tick"/><text x="736.0" y="312" class="axis-label" text-anchor="middle">640</text>
+  <path d="M64.0,292.0 L176.0,251.9 L288.0,211.7 L400.0,171.8 L512.0,132.5 L624.0,92.9 L736.0,53.8" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="series-line" data-series="cpu"/><path d="M64.0,274.9 L176.0,234.4 L288.0,194.3 L400.0,154.6 L512.0,115.2 L624.0,75.9 L736.0,35.8" fill="none" stroke="#eb6834" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="series-line" data-series="gpu"/><path d="M64.0,183.8 L176.0,143.1 L288.0,103.3 L400.0,63.6 L512.0,24.0" fill="none" stroke="#1baf7a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="series-line" data-series="cerebras"/>
+  <circle cx="64.0" cy="292.0" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=10, Runtime vs # sequences=154.31 ms"/><circle cx="176.0" cy="251.9" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=20, Runtime vs # sequences=634.85 ms"/><circle cx="288.0" cy="211.7" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=40, Runtime vs # sequences=2,619.88 ms"/><circle cx="400.0" cy="171.8" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=80, Runtime vs # sequences=10,705.56 ms"/><circle cx="512.0" cy="132.5" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=160, Runtime vs # sequences=42,885.66 ms"/><circle cx="624.0" cy="92.9" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=320, Runtime vs # sequences=173,211.31 ms"/><circle cx="736.0" cy="53.8" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=640, Runtime vs # sequences=686,405.77 ms"/><circle cx="64.0" cy="274.9" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=10, Runtime vs # sequences=281.75 ms"/><circle cx="176.0" cy="234.4" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=20, Runtime vs # sequences=1,176.35 ms"/><circle cx="288.0" cy="194.3" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=40, Runtime vs # sequences=4,838.17 ms"/><circle cx="400.0" cy="154.6" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=80, Runtime vs # sequences=19,616.00 ms"/><circle cx="512.0" cy="115.2" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=160, Runtime vs # sequences=78,893.50 ms"/><circle cx="624.0" cy="75.9" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=320, Runtime vs # sequences=315,415.00 ms"/><circle cx="736.0" cy="35.8" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=640, Runtime vs # sequences=1,296,770.00 ms"/><circle cx="64.0" cy="183.8" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=10, Runtime vs # sequences=7,018.18 ms"/><circle cx="176.0" cy="143.1" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=20, Runtime vs # sequences=29,469.06 ms"/><circle cx="288.0" cy="103.3" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=40, Runtime vs # sequences=119,788.59 ms"/><circle cx="400.0" cy="63.6" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=80, Runtime vs # sequences=485,888.99 ms"/><circle cx="512.0" cy="24.0" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=160, Runtime vs # sequences=1,965,730.49 ms"/>
+  <text x="400.0" y="334" class="axis-title" text-anchor="middle"># of sequences (log x-axis)</text>
+</svg></div>
+    <details><summary>Raw data table</summary><table class="data-table"><caption>Runtime — raw values</caption><thead><tr><th>n</th><th>CPU</th><th>GPU (CUDA, PT)</th><th>Cerebras CS-3</th></tr></thead><tbody><tr><td>10</td><td>154.3 ms</td><td>281.8 ms</td><td>7,018.2 ms</td></tr><tr><td>20</td><td>634.8 ms</td><td>1,176.3 ms</td><td>29,469.1 ms</td></tr><tr><td>40</td><td>2,619.9 ms</td><td>4,838.2 ms</td><td>119,788.6 ms</td></tr><tr><td>80</td><td>10,705.6 ms</td><td>19,616.0 ms</td><td>485,889.0 ms</td></tr><tr><td>160</td><td>42,885.7 ms</td><td>78,893.5 ms</td><td>1,965,730.5 ms</td></tr><tr><td>320</td><td>173,211.3 ms</td><td>315,415.0 ms</td><td>—</td></tr><tr><td>640</td><td>686,405.8 ms</td><td>1,296,770.0 ms</td><td>—</td></tr></tbody></table></details>
+  </section>
+
+  <section>
+    <h2>2. Memory usage vs # of sequences</h2>
+    <p class="chart-note">Peak working-set memory. Structurally flat is the expected/correct shape here, not a bug: every backend processes pairs sequentially, reusing one fixed-size working set (the DP matrix for one pair, or the CS-3 kernel's static per-PE arrays) rather than accumulating state across pairs.</p>
+    <div class="chart-wrap"><svg viewBox="0 0 760 340" class="chart-svg" id="chart-memory" role="img" aria-label="Memory vs # sequences">
+  <line x1="64" y1="292.0" x2="736" y2="292.0" class="gridline"/><text x="56" y="292.0" class="axis-label" text-anchor="end" dominant-baseline="middle">0.000</text><line x1="64" y1="238.4" x2="736" y2="238.4" class="gridline"/><text x="56" y="238.4" class="axis-label" text-anchor="end" dominant-baseline="middle">3</text><line x1="64" y1="184.8" x2="736" y2="184.8" class="gridline"/><text x="56" y="184.8" class="axis-label" text-anchor="end" dominant-baseline="middle">6</text><line x1="64" y1="131.2" x2="736" y2="131.2" class="gridline"/><text x="56" y="131.2" class="axis-label" text-anchor="end" dominant-baseline="middle">9</text><line x1="64" y1="77.6" x2="736" y2="77.6" class="gridline"/><text x="56" y="77.6" class="axis-label" text-anchor="end" dominant-baseline="middle">12</text><line x1="64" y1="24.0" x2="736" y2="24.0" class="gridline"/><text x="56" y="24.0" class="axis-label" text-anchor="end" dominant-baseline="middle">15</text>
+  <line x1="64" y1="292" x2="736" y2="292" class="axis-line"/>
+  <line x1="64.0" y1="292" x2="64.0" y2="297" class="tick"/><text x="64.0" y="312" class="axis-label" text-anchor="middle">10</text><line x1="176.0" y1="292" x2="176.0" y2="297" class="tick"/><text x="176.0" y="312" class="axis-label" text-anchor="middle">20</text><line x1="288.0" y1="292" x2="288.0" y2="297" class="tick"/><text x="288.0" y="312" class="axis-label" text-anchor="middle">40</text><line x1="400.0" y1="292" x2="400.0" y2="297" class="tick"/><text x="400.0" y="312" class="axis-label" text-anchor="middle">80</text><line x1="512.0" y1="292" x2="512.0" y2="297" class="tick"/><text x="512.0" y="312" class="axis-label" text-anchor="middle">160</text><line x1="624.0" y1="292" x2="624.0" y2="297" class="tick"/><text x="624.0" y="312" class="axis-label" text-anchor="middle">320</text><line x1="736.0" y1="292" x2="736.0" y2="297" class="tick"/><text x="736.0" y="312" class="axis-label" text-anchor="middle">640</text>
+  <path d="M64.0,87.4 L176.0,87.4 L288.0,87.4 L400.0,87.4 L512.0,87.4 L624.0,87.4 L736.0,87.4" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="series-line" data-series="cpu"/><path d="M64.0,256.9 L176.0,292.0 L288.0,292.0 L400.0,292.0 L512.0,292.0 L624.0,292.0 L736.0,292.0" fill="none" stroke="#eb6834" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="series-line" data-series="gpu"/><path d="M64.0,24.0 L176.0,24.0 L288.0,24.0 L400.0,24.0 L512.0,24.0" fill="none" stroke="#1baf7a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="series-line" data-series="cerebras"/>
+  <circle cx="64.0" cy="87.4" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=10, Memory vs # sequences=11.66 MB"/><circle cx="176.0" cy="87.4" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=20, Memory vs # sequences=11.66 MB"/><circle cx="288.0" cy="87.4" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=40, Memory vs # sequences=11.66 MB"/><circle cx="400.0" cy="87.4" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=80, Memory vs # sequences=11.66 MB"/><circle cx="512.0" cy="87.4" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=160, Memory vs # sequences=11.66 MB"/><circle cx="624.0" cy="87.4" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=320, Memory vs # sequences=11.66 MB"/><circle cx="736.0" cy="87.4" r="4.5" fill="#2a78d6" class="data-point" data-series="cpu" data-tip="CPU: n=640, Memory vs # sequences=11.66 MB"/><circle cx="64.0" cy="256.9" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=10, Memory vs # sequences=2.00 MB"/><circle cx="176.0" cy="292.0" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=20, Memory vs # sequences=0.00 MB"/><circle cx="288.0" cy="292.0" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=40, Memory vs # sequences=0.00 MB"/><circle cx="400.0" cy="292.0" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=80, Memory vs # sequences=0.00 MB"/><circle cx="512.0" cy="292.0" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=160, Memory vs # sequences=0.00 MB"/><circle cx="624.0" cy="292.0" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=320, Memory vs # sequences=0.00 MB"/><circle cx="736.0" cy="292.0" r="4.5" fill="#eb6834" class="data-point" data-series="gpu" data-tip="GPU (CUDA, PT): n=640, Memory vs # sequences=0.00 MB"/><circle cx="64.0" cy="24.0" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=10, Memory vs # sequences=15.27 MB"/><circle cx="176.0" cy="24.0" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=20, Memory vs # sequences=15.27 MB"/><circle cx="288.0" cy="24.0" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=40, Memory vs # sequences=15.27 MB"/><circle cx="400.0" cy="24.0" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=80, Memory vs # sequences=15.27 MB"/><circle cx="512.0" cy="24.0" r="4.5" fill="#1baf7a" class="data-point" data-series="cerebras" data-tip="Cerebras CS-3: n=160, Memory vs # sequences=15.27 MB"/>
+  <text x="400.0" y="334" class="axis-title" text-anchor="middle"># of sequences (log x-axis)</text>
+</svg></div>
+    <details><summary>Raw data table</summary><table class="data-table"><caption>Memory — raw values</caption><thead><tr><th>n</th><th>CPU</th><th>GPU (CUDA, PT)</th><th>Cerebras CS-3</th></tr></thead><tbody><tr><td>10</td><td>11.66 MB</td><td>2.00 MB</td><td>15.27 MB</td></tr><tr><td>20</td><td>11.66 MB</td><td>0.00 MB</td><td>15.27 MB</td></tr><tr><td>40</td><td>11.66 MB</td><td>0.00 MB</td><td>15.27 MB</td></tr><tr><td>80</td><td>11.66 MB</td><td>0.00 MB</td><td>15.27 MB</td></tr><tr><td>160</td><td>11.66 MB</td><td>0.00 MB</td><td>15.27 MB</td></tr><tr><td>320</td><td>11.66 MB</td><td>0.00 MB</td><td>—</td></tr><tr><td>640</td><td>11.66 MB</td><td>0.00 MB</td><td>—</td></tr></tbody></table></details>
+  </section>
+
+  <section>
+    <h2>3. % time in I/O vs # of sequences</h2>
+    <p class="chart-note">Share of wall time spent moving data rather than computing (host↔device transfer for GPU/CS-3; CPU has no such step).</p>
+    <div class="chart-wrap"><svg viewBox="0 0 760 340" class="chart-svg" role="img" aria-label="I/O share vs # sequences">
+  <line x1="64" y1="284.0" x2="736" y2="284.0" class="gridline"/><text x="56" y="284.0" class="axis-label" text-anchor="end" dominant-baseline="middle">0%</text><line x1="64" y1="219.0" x2="736" y2="219.0" class="gridline"/><text x="56" y="219.0" class="axis-label" text-anchor="end" dominant-baseline="middle">25%</text><line x1="64" y1="154.0" x2="736" y2="154.0" class="gridline"/><text x="56" y="154.0" class="axis-label" text-anchor="end" dominant-baseline="middle">50%</text><line x1="64" y1="89.0" x2="736" y2="89.0" class="gridline"/><text x="56" y="89.0" class="axis-label" text-anchor="end" dominant-baseline="middle">75%</text><line x1="64" y1="24.0" x2="736" y2="24.0" class="gridline"/><text x="56" y="24.0" class="axis-label" text-anchor="end" dominant-baseline="middle">100%</text>
+  <line x1="64" y1="284" x2="736" y2="284" class="axis-line"/>
+  <text x="112.0" y="304" class="axis-label" text-anchor="middle">10</text><text x="208.0" y="304" class="axis-label" text-anchor="middle">20</text><text x="304.0" y="304" class="axis-label" text-anchor="middle">40</text><text x="400.0" y="304" class="axis-label" text-anchor="middle">80</text><text x="496.0" y="304" class="axis-label" text-anchor="middle">160</text><text x="592.0" y="304" class="axis-label" text-anchor="middle">320</text><text x="688.0" y="304" class="axis-label" text-anchor="middle">640</text>
+  <rect x="76.0" y="284.0" width="19.2" height="0.0" fill="#2a78d6" rx="2" class="data-bar" data-tip="CPU: n=10, I/O share=0.0%"/><rect x="100.0" y="196.8" width="19.2" height="87.2" fill="#eb6834" rx="2" class="data-bar" data-tip="GPU (CUDA, PT): n=10, I/O share=33.5%"/><rect x="124.0" y="26.2" width="19.2" height="257.8" fill="#1baf7a" rx="2" class="data-bar" data-tip="Cerebras CS-3: n=10, I/O share=99.2%"/><rect x="172.0" y="284.0" width="19.2" height="0.0" fill="#2a78d6" rx="2" class="data-bar" data-tip="CPU: n=20, I/O share=0.0%"/><rect x="196.0" y="198.8" width="19.2" height="85.2" fill="#eb6834" rx="2" class="data-bar" data-tip="GPU (CUDA, PT): n=20, I/O share=32.8%"/><rect x="220.0" y="26.0" width="19.2" height="258.0" fill="#1baf7a" rx="2" class="data-bar" data-tip="Cerebras CS-3: n=20, I/O share=99.2%"/><rect x="268.0" y="284.0" width="19.2" height="0.0" fill="#2a78d6" rx="2" class="data-bar" data-tip="CPU: n=40, I/O share=0.0%"/><rect x="292.0" y="198.4" width="19.2" height="85.6" fill="#eb6834" rx="2" class="data-bar" data-tip="GPU (CUDA, PT): n=40, I/O share=32.9%"/><rect x="316.0" y="25.9" width="19.2" height="258.1" fill="#1baf7a" rx="2" class="data-bar" data-tip="Cerebras CS-3: n=40, I/O share=99.3%"/><rect x="364.0" y="284.0" width="19.2" height="0.0" fill="#2a78d6" rx="2" class="data-bar" data-tip="CPU: n=80, I/O share=0.0%"/><rect x="388.0" y="198.3" width="19.2" height="85.7" fill="#eb6834" rx="2" class="data-bar" data-tip="GPU (CUDA, PT): n=80, I/O share=33.0%"/><rect x="412.0" y="25.9" width="19.2" height="258.1" fill="#1baf7a" rx="2" class="data-bar" data-tip="Cerebras CS-3: n=80, I/O share=99.3%"/><rect x="460.0" y="284.0" width="19.2" height="0.0" fill="#2a78d6" rx="2" class="data-bar" data-tip="CPU: n=160, I/O share=0.0%"/><rect x="484.0" y="198.4" width="19.2" height="85.6" fill="#eb6834" rx="2" class="data-bar" data-tip="GPU (CUDA, PT): n=160, I/O share=32.9%"/><rect x="508.0" y="26.0" width="19.2" height="258.0" fill="#1baf7a" rx="2" class="data-bar" data-tip="Cerebras CS-3: n=160, I/O share=99.2%"/><rect x="556.0" y="284.0" width="19.2" height="0.0" fill="#2a78d6" rx="2" class="data-bar" data-tip="CPU: n=320, I/O share=0.0%"/><rect x="580.0" y="199.1" width="19.2" height="84.9" fill="#eb6834" rx="2" class="data-bar" data-tip="GPU (CUDA, PT): n=320, I/O share=32.7%"/><rect x="604.0" y="284.0" width="19.2" height="0.0" fill="#1baf7a" rx="2" class="data-bar" data-tip="Cerebras CS-3: n=320, I/O share=0.0%"/><rect x="652.0" y="284.0" width="19.2" height="0.0" fill="#2a78d6" rx="2" class="data-bar" data-tip="CPU: n=640, I/O share=0.0%"/><rect x="676.0" y="194.6" width="19.2" height="89.4" fill="#eb6834" rx="2" class="data-bar" data-tip="GPU (CUDA, PT): n=640, I/O share=34.4%"/><rect x="700.0" y="284.0" width="19.2" height="0.0" fill="#1baf7a" rx="2" class="data-bar" data-tip="Cerebras CS-3: n=640, I/O share=0.0%"/>
+  <text x="400.0" y="334" class="axis-title" text-anchor="middle"># of sequences</text>
+</svg></div>
+    <details><summary>Raw data table</summary><table class="data-table"><caption>I/O share — raw values</caption><thead><tr><th>n</th><th>CPU</th><th>GPU (CUDA, PT)</th><th>Cerebras CS-3</th></tr></thead><tbody><tr><td>10</td><td>0.0%</td><td>33.5%</td><td>99.2%</td></tr><tr><td>20</td><td>0.0%</td><td>32.8%</td><td>99.2%</td></tr><tr><td>40</td><td>0.0%</td><td>32.9%</td><td>99.3%</td></tr><tr><td>80</td><td>0.0%</td><td>33.0%</td><td>99.3%</td></tr><tr><td>160</td><td>0.0%</td><td>32.9%</td><td>99.2%</td></tr><tr><td>320</td><td>0.0%</td><td>32.7%</td><td>—</td></tr><tr><td>640</td><td>0.0%</td><td>34.4%</td><td>—</td></tr></tbody></table></details>
+    <div class="io-note">
+      <strong>Sequence/substitution-matrix transfer strategy (CS-3):</strong> no substitution matrix is used —
+      scoring is uniform match/mismatch/gap scalars baked in at compile time (DNA alignment convention
+      this whole project uses; ACGT only). Sequences: one PE per character of sequence A
+      (one distinct <code>int32</code> per PE via a single <code>memcpy_h2d</code>, row-major onto the
+      PE line); sequence B is broadcast identically to every PE's local memory (<code>np.tile</code> +
+      one <code>memcpy_h2d</code>), so each PE walks all of B locally with zero fabric traffic during
+      compute. One compile serves the entire sweep, since every sequence in the dataset is the same
+      1000bp — sweeping n only changes how many pairs run through the same fixed-shape kernel.
+      <strong>GPU:</strong> per-pair H2D/D2H of the two sequences and the resulting H/TB matrices;
+      <code>kernel_ms</code> is pure on-device compute time, tracked per-call in this codebase already.
+    </div>
+  </section>
+
+  <section>
+    <h2>4. Device utilization</h2>
+    <p class="chart-note">A metric that only exists for one of the three backends — reported as-is rather than papered over.</p>
+    <div class="io-note">
+      <strong>GPU:</strong> real, measured, via <code>nvidia-smi</code> sampled every 5s throughout the ACES sweep run —
+      <strong>68.3% average</strong> utilization (min 0% at startup, max 71%), on the single H100 allocated
+      (exclusively) to this job; see <code>results/gpu/gpu_utilization.csv</code>.<br><br>
+      <strong>CS-3:</strong> no equivalent metric is obtainable. Checked thoroughly, not assumed absent —
+      neither <code>csctl</code> nor the SDK's own instrumentation tools (<code>InstrTrace</code>, <code>WaveletTrace</code>)
+      expose PE-activity data for real hardware in this SDK version (both require a simulator log file as input).
+      What <em>is</em> knowable: wafer allocation is all-or-nothing (100%, confirmed empirically — the scheduler
+      never runs two <code>execute</code> jobs concurrently), and this kernel's own PE-grid occupancy of that
+      allocation is analytically ~0.11% (1,000 of 893,064 addressable PEs) for the sequential single-pair design
+      above — a batched redesign explored separately (see <code>results/README.md</code> section 3) raised that
+      to ~85% PE occupancy and cut all-pairs wall time by roughly 500x, without ever producing a utilization
+      <em>percentage</em> the way <code>nvidia-smi</code> does, since the underlying telemetry simply isn't exposed.
+      Full detail: <code>results/HARDWARE.md</code>.<br><br>
+      <strong>CPU:</strong> not applicable in the same sense (no device to under/over-utilize) — the sweep is
+      deliberately single-threaded, matching the GPU/CS-3 legs' "one pairwise alignment's worth of parallelism per
+      launch" framing rather than exploiting all cores, so a core-utilization number here would measure the sweep
+      script's threading choice, not the hardware.
+    </div>
+  </section>
+
+  <footer>
+    Generated from <code>results/sweep_cpu.csv</code>, <code>results/gpu/sweep_gpu.csv</code>,
+    <code>cs3/milestone2_allpairs/sweep_cerebras.csv</code>. Pending series will populate as those
+    runs complete — this page regenerates from whatever's on disk.
+  </footer>
+</div>

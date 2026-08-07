@@ -1,0 +1,174 @@
+// Per-PE kernel: same global-mode recurrence as milestone2/3, but B now
+// arrives via fabric relay (north neighbor) instead of direct memcpy_h2d,
+// except at row 0 (top of column) where the host writes it directly. Flow
+// per launch: (1) relay B south through the whole column, (2) then run the
+// normal up_row/H_row wavefront exactly as before, using the now-locally-
+// available B. Two sequential stages sharing the same 2-color checkerboard
+// link scheme (safe: B-relay fully completes at each PE before that PE's
+// up_row-relay task ever activates, so the colors are never used by both
+// flows at once).
+
+param memcpy_params;
+
+param n: i16;
+param row_index: i16;
+param has_north: bool;
+param has_south: bool;
+param north_color: color;
+param south_color: color;
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+
+const gap: i32 = 2;
+const match_score: i32 = 2;
+const mismatch_penalty: i32 = 1;
+
+const TB_STOP: u32 = 0;
+const TB_DIAG: u32 = 1;
+const TB_UP: u32 = 2;
+const TB_LEFT: u32 = 3;
+
+var a_char: [1]i32;
+var B: [1000]i32;         // row 0: host-written; row>0: filled by relay before compute
+var H_row: [1001]i32;
+var TB_row: [1001]u32;
+var up_row: [1001]i32;
+
+var a_char_ptr: [*]i32 = &a_char;
+var B_ptr: [*]i32 = &B;
+const H_ptr: [*]i32 = &H_row;
+const TB_ptr: [*]u32 = &TB_row;
+
+const north_iq = @get_input_queue(2);
+const south_oq = @get_output_queue(3);
+
+const done_task_id = @get_local_task_id(8);
+const after_recv_task_id = @get_local_task_id(9);
+const b_relay_recv_task_id = @get_local_task_id(10);
+const b_relay_sent_task_id = @get_local_task_id(11);
+
+fn do_compute() void {
+  H_row[0] = -gap * @as(i32, row_index);
+  TB_row[0] = TB_UP;
+
+  var prev_left: i32 = H_row[0];
+  var prev_up: i32 = up_row[0];
+
+  var j: i16 = 1;
+  while (j <= n) : (j += 1) {
+    const up_j = up_row[j];
+    const diag_score = prev_up + (if (a_char[0] == B[j - 1]) match_score else -mismatch_penalty);
+    const up_score = up_j - gap;
+    const left_score = prev_left - gap;
+
+    var best = diag_score;
+    var dir = TB_DIAG;
+    if (up_score > best) { best = up_score; dir = TB_UP; }
+    if (left_score > best) { best = left_score; dir = TB_LEFT; }
+
+    H_row[j] = best;
+    TB_row[j] = dir;
+
+    prev_left = best;
+    prev_up = up_j;
+  }
+
+  if (has_south) {
+    const out_dsd = @get_dsd(fabout_dsd, if (@is_arch("wse3")) .{
+                      .extent = n + 1, .output_queue = south_oq
+                    } else .{
+                      .fabric_color = south_color, .extent = n + 1,
+                      .output_queue = south_oq
+                    });
+    const h_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &H_row, .extent = n + 1 });
+    @mov32(out_dsd, h_dsd, .{ .async = true, .activate = done_task_id });
+  } else {
+    @activate(done_task_id);
+  }
+}
+
+task after_recv_task() void {
+  do_compute();
+}
+
+task done_task() void {
+  sys_mod.unblock_cmd_stream();
+}
+
+fn start_up_row_exchange() void {
+  if (has_north) {
+    const in_dsd = @get_dsd(fabin_dsd, .{ .extent = n + 1, .input_queue = north_iq });
+    const buf_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &up_row, .extent = n + 1 });
+    @mov32(buf_dsd, in_dsd, .{ .async = true, .activate = after_recv_task_id });
+  } else {
+    var j: i16 = 0;
+    while (j <= n) : (j += 1) {
+      up_row[j] = -gap * @as(i32, j);
+    }
+    do_compute();
+  }
+}
+
+// Stage 1: relay B south. Only relevant when has_north (row 0's B is
+// already correct, written by the host); after relaying (or immediately,
+// at row 0) move on to stage 2.
+task b_relay_sent_task() void {
+  start_up_row_exchange();
+}
+
+task b_relay_recv_task() void {
+  if (has_south) {
+    const out_dsd = @get_dsd(fabout_dsd, if (@is_arch("wse3")) .{
+                      .extent = n, .output_queue = south_oq
+                    } else .{
+                      .fabric_color = south_color, .extent = n,
+                      .output_queue = south_oq
+                    });
+    const b_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &B, .extent = n });
+    @mov32(out_dsd, b_dsd, .{ .async = true, .activate = b_relay_sent_task_id });
+  } else {
+    start_up_row_exchange();
+  }
+}
+
+fn compute() void {
+  if (has_north) {
+    const in_dsd = @get_dsd(fabin_dsd, .{ .extent = n, .input_queue = north_iq });
+    const buf_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &B, .extent = n });
+    @mov32(buf_dsd, in_dsd, .{ .async = true, .activate = b_relay_recv_task_id });
+  } else {
+    // Row 0: B already holds the host-written value; relay it south (if any).
+    if (has_south) {
+      const out_dsd = @get_dsd(fabout_dsd, if (@is_arch("wse3")) .{
+                        .extent = n, .output_queue = south_oq
+                      } else .{
+                        .fabric_color = south_color, .extent = n,
+                        .output_queue = south_oq
+                      });
+      const b_dsd = @get_dsd(mem1d_dsd, .{ .base_address = &B, .extent = n });
+      @mov32(out_dsd, b_dsd, .{ .async = true, .activate = b_relay_sent_task_id });
+    } else {
+      start_up_row_exchange();
+    }
+  }
+}
+
+comptime {
+  @bind_local_task(b_relay_recv_task, b_relay_recv_task_id);
+  @bind_local_task(b_relay_sent_task, b_relay_sent_task_id);
+  @bind_local_task(after_recv_task, after_recv_task_id);
+  @bind_local_task(done_task, done_task_id);
+
+  if (has_north) {
+    @initialize_queue(north_iq, .{ .color = north_color });
+  }
+  if (has_south) {
+    @initialize_queue(south_oq, if (@is_arch("wse3")) .{ .color = south_color } else .{});
+  }
+
+  @export_symbol(a_char_ptr, "a_char");
+  @export_symbol(B_ptr, "B");
+  @export_symbol(H_ptr, "H_row");
+  @export_symbol(TB_ptr, "TB_row");
+  @export_symbol(compute);
+}

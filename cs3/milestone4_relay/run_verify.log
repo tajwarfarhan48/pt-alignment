@@ -1,0 +1,11 @@
+Event 2026-08-06 22:02:06 +0000 UTC reason=InconsistentVersion wsjob=wsjob-duqqzgnuxyaq6zfyljbjad message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+2026-08-06 22:04:49,889 INFO     CSL compiler output:
+	CSL compiler produced no messages. Compilation successful.
+Event 2026-08-06 22:05:16 +0000 UTC reason=InconsistentVersion wsjob=wsjob-6x8gvknmuo5bsobxzvygwv message='Warning: client semantic version 1.14.0 is inconsistent with cluster server semantic version 1.20.2, there's a risk job could fail due to inconsistent setup.'
+Could not find coordinator IP:port in cluster details
+Empty ingress service url. Falling back to default server: 10.0.12.0:443
+compiled artifact (width=4): ./cs_3d93ffd273c1549e1512d82f7239cdbdce1dab76091b26c8a3ad5c464f40e5b7.tar.gz
+timing (width=4): {'pack_s': 0.0005094213411211967, 'h2d_a_s': 0.0015744557604193687, 'h2d_b_s': 0.0008294722065329552, 'launch_s': 0.0007061120122671127, 'd2h_s': 0.062102168798446655, 'total_s': 0.06572163011878729, 'b_bytes': 16000}
+got:      [500, 488, 530, 461]
+expected: [500, 488, 530, 461]
+SUCCESS: 4-wide real-hardware B-relay batch matches align_cpu() exactly
